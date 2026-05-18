@@ -9,8 +9,7 @@ import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
-import 'package:sensors_plus/sensors_plus.dart';
-import '../services/api_service.dart';
+import 'package:sensors_plus/sensors_plus.dart';import '../services/api_service.dart';
 import '../services/audio_service.dart';
 import '../services/camera_service.dart';
 import '../services/haptic_service.dart';
@@ -135,7 +134,12 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
     // Play TTS audio from backend (or speak locally if empty)
     if (result.audioB64.isNotEmpty) {
-      await _audio.playBase64Audio(result.audioB64);
+      // Try backend audio first, fall back to local TTS with the scene text
+      try {
+        await _audio.playBase64Audio(result.audioB64);
+      } catch (_) {
+        await _speakIfReady(_statusText);
+      }
       _lastSpokenAt = DateTime.now();
     } else {
       await _speakIfReady(_statusText);
@@ -151,7 +155,11 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
     final audioB64 = result['audio_b64'] as String?;
     if (audioB64 != null && audioB64.isNotEmpty) {
-      await _audio.playBase64Audio(audioB64);
+      try {
+        await _audio.playBase64Audio(audioB64);
+      } catch (_) {
+        await _speakIfReady(text);
+      }
       _lastSpokenAt = DateTime.now();
     } else {
       await _speakIfReady(text);
