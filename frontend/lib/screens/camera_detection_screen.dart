@@ -1,15 +1,19 @@
 /// VisionMate AI - Camera Detection Screen
 /// ==========================================
-/// Live camera feed with real-time object detection and voice feedback.
-/// Supports both object detection mode and OCR mode.
-/// Designed for blind users: tap anywhere to scan, auto-announces results.
+/// Designed for blind users:
+/// - Camera starts automatically
+/// - Scans every 3 seconds and speaks results
+/// - IMMEDIATE alert (voice + vibration) when object is very close
+/// - Double-tap anywhere = instant scan
+/// - Long-press anywhere = speak time + battery info
+/// - Single tap = speak last result again
 
 import 'dart:async';
-import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
-import 'package:sensors_plus/sensors_plus.dart';import '../services/api_service.dart';
+import 'package:flutter/services.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import '../services/api_service.dart';
 import '../services/audio_service.dart';
 import '../services/camera_service.dart';
 import '../services/haptic_service.dart';
@@ -19,11 +23,19 @@ import '../utils/constants.dart';
 import '../widgets/detection_overlay.dart';
 import '../widgets/voice_command_button.dart';
 
+export 'camera_detection_screen.dart';
+
 enum DetectionMode { objects, ocr }
 
 class CameraDetectionScreen extends StatefulWidget {
   final DetectionMode mode;
-  const CameraDetectionScreen({super.key, this.mode = DetectionMode.objects});
+  final bool autoStart;
+
+  const CameraDetectionScreen({
+    super.key,
+    this.mode = DetectionMode.objects,
+    this.autoStart = false,
+  });
 
   @override
   State<CameraDetectionScreen> createState() => _CameraDetectionScreenState();
@@ -35,20 +47,27 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   final AudioService _audio = AudioService.instance;
   final HapticService _haptic = HapticService.instance;
 
-  Timer? _detectionTimer;
+  // Timers
+  Timer? _scanTimer;        // regular 3-second scan
+  Timer? _alertTimer;       // fast 1-second proximity check
+
   List<DetectionResult> _detections = [];
-  String _statusText = 'Initialising camera…';
+  String _statusText = 'Starting camera…';
   bool _isProcessing = false;
   bool _isListening = false;
-  bool _audioUnlocked = false; // tracks browser autoplay unlock
+  String _lastSpokenText = '';
 
-  // Shake detection for SOS
+  // Throttle regular TTS
+  DateTime? _lastSpokenAt;
+  static const _scanIntervalSec = 3;
+
+  // Proximity alert throttle — alert at most every 2 seconds
+  DateTime? _lastAlertAt;
+  static const _alertIntervalSec = 2;
+
+  // Shake → SOS
   StreamSubscription? _accelSub;
   DateTime? _lastShake;
-
-  // Throttle TTS so it doesn't speak every 500ms
-  DateTime? _lastSpokenAt;
-  static const _speakIntervalSec = 4; // speak at most every 4 seconds
 
   @override
   void initState() {
@@ -57,61 +76,81 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
     _setupShakeDetection();
   }
 
+  // ── Camera init ────────────────────────────────────────────────────────────
+
   Future<void> _initCamera() async {
     try {
       await _cam.initialize();
-      setState(() => _statusText = 'Camera ready. Tap anywhere to start scanning.');
-      await _audio.speakLocal(
-        widget.mode == DetectionMode.ocr
-            ? 'OCR mode. Tap anywhere to read text in front of you.'
-            : 'Detection mode active. Tap anywhere to scan your surroundings.',
-      );
-      _audioUnlocked = true;
-      _startDetectionLoop();
+      setState(() => _statusText = 'Camera ready');
+
+      final modeMsg = widget.mode == DetectionMode.ocr
+          ? 'Text reader ready. Scanning for text.'
+          : 'Camera ready. Scanning your surroundings.';
+      await _audio.speakLocal(modeMsg);
+
+      _startScanLoop();
+      _startAlertLoop();
     } catch (e) {
       setState(() => _statusText = 'Camera error. Please allow camera access.');
-      await _audio.speakLocal('Camera error. Please allow camera access and try again.');
+      await _audio.speakLocal('Camera error. Please allow camera access.');
     }
   }
 
-  void _startDetectionLoop() {
-    // Auto-scan every 4 seconds (not 500ms) to avoid spamming TTS
-    _detectionTimer = Timer.periodic(
-      const Duration(seconds: _speakIntervalSec),
-      (_) => _processFrame(),
+  // ── Scan loops ─────────────────────────────────────────────────────────────
+
+  /// Regular scan every 3 seconds — speaks full scene description
+  void _startScanLoop() {
+    _scanTimer = Timer.periodic(
+      const Duration(seconds: _scanIntervalSec),
+      (_) => _runFullScan(),
     );
   }
 
-  /// Called by auto-loop and manual tap
-  Future<void> _processFrame() async {
+  /// Fast proximity check every 1 second — ONLY for collision alerts
+  void _startAlertLoop() {
+    _alertTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _runProximityCheck(),
+    );
+  }
+
+  /// Full scan: detect objects and speak scene description
+  Future<void> _runFullScan() async {
     if (_isProcessing || !_cam.isInitialized) return;
     _isProcessing = true;
 
-    setState(() => _statusText = 'Scanning…');
-
     try {
       final b64 = await _cam.captureFrameBase64();
-      if (b64 == null) {
-        setState(() => _statusText = 'Could not capture frame.');
-        return;
-      }
+      if (b64 == null) return;
 
       if (widget.mode == DetectionMode.ocr) {
         await _runOCR(b64);
       } else {
-        await _runDetection(b64);
+        await _runDetection(b64, speakResult: true);
       }
     } catch (e) {
-      setState(() => _statusText = 'Scan failed. Retrying…');
-      // Speak error only if it's been a while (avoid spam)
-      await _speakIfReady('Scan failed. Please wait.');
-      debugPrint('Frame processing error: $e');
+      debugPrint('Scan error: $e');
     } finally {
       _isProcessing = false;
     }
   }
 
-  Future<void> _runDetection(String b64) async {
+  /// Fast proximity check — only triggers if something is very close
+  Future<void> _runProximityCheck() async {
+    if (_isProcessing || !_cam.isInitialized) return;
+
+    try {
+      final b64 = await _cam.captureFrameBase64();
+      if (b64 == null) return;
+      await _runDetection(b64, speakResult: false, proximityOnly: true);
+    } catch (_) {}
+  }
+
+  Future<void> _runDetection(
+    String b64, {
+    required bool speakResult,
+    bool proximityOnly = false,
+  }) async {
     final result = await _api.detectObjects(imageB64: b64);
     if (!mounted) return;
 
@@ -119,27 +158,52 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
         ? result.sceneSummary
         : 'No objects detected.';
 
-    setState(() {
-      _detections = result.detections;
-      _statusText = summary;
-    });
+    if (!proximityOnly) {
+      setState(() {
+        _detections = result.detections;
+        _statusText = summary;
+        _lastSpokenText = summary;
+      });
+    }
 
-    // Haptic feedback based on proximity
-    final veryClose = result.detections.any((d) => d.isVeryClose);
-    final close = result.detections.any((d) => d.isClose);
+    // ── COLLISION ALERT (highest priority) ──────────────────────────────────
+    final veryClose = result.detections.where((d) => d.isVeryClose).toList();
+    if (veryClose.isNotEmpty) {
+      final now = DateTime.now();
+      final canAlert = _lastAlertAt == null ||
+          now.difference(_lastAlertAt!).inSeconds >= _alertIntervalSec;
 
-    if (veryClose) {
-      await _haptic.pulseVeryClose();
-      // Immediate proximity alert — always speak, bypass throttle
-      await _audio.speakLocal('Warning! Object very close. Stop immediately.');
-      _lastSpokenAt = DateTime.now();
-      return; // skip regular summary, proximity alert takes priority
-    } else if (close) {
+      if (canAlert) {
+        _lastAlertAt = now;
+
+        // 1. Strong vibration pattern
+        await _haptic.pulseVeryClose();
+
+        // 2. Urgent voice alert — interrupts everything
+        final labels = veryClose.map((d) => d.label).toSet().join(' and ');
+        await _audio.speakLocal(
+          'Warning! $labels very close. Stop immediately.',
+        );
+        return; // skip regular description
+      }
+    }
+
+    // ── CLOSE OBJECT (caution) ───────────────────────────────────────────────
+    final close = result.detections.where((d) => d.isClose).toList();
+    if (close.isNotEmpty && !proximityOnly) {
       await _haptic.pulseClose();
     }
 
-    // Always speak the scene summary using local TTS (works on web via speechSynthesis)
-    await _speakIfReady(summary);
+    // ── REGULAR SCENE DESCRIPTION ────────────────────────────────────────────
+    if (speakResult && !proximityOnly) {
+      final now = DateTime.now();
+      final canSpeak = _lastSpokenAt == null ||
+          now.difference(_lastSpokenAt!).inSeconds >= _scanIntervalSec;
+      if (canSpeak) {
+        _lastSpokenAt = now;
+        await _audio.speakLocal(summary);
+      }
+    }
   }
 
   Future<void> _runOCR(String b64) async {
@@ -147,24 +211,54 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
     if (!mounted) return;
 
     final text = result['text'] as String? ?? 'No text found.';
-    setState(() => _statusText = text);
-    // Always speak using local TTS
-    await _speakIfReady(text);
-  }
+    setState(() {
+      _statusText = text;
+      _lastSpokenText = text;
+    });
 
-  /// Speak only if enough time has passed since last speech
-  Future<void> _speakIfReady(String text) async {
     final now = DateTime.now();
-    if (_lastSpokenAt == null ||
-        now.difference(_lastSpokenAt!).inSeconds >= _speakIntervalSec) {
+    final canSpeak = _lastSpokenAt == null ||
+        now.difference(_lastSpokenAt!).inSeconds >= _scanIntervalSec;
+    if (canSpeak) {
       _lastSpokenAt = now;
       await _audio.speakLocal(text);
     }
   }
 
+  // ── Gesture handlers ───────────────────────────────────────────────────────
+
+  /// Single tap — repeat last spoken result
+  void _onSingleTap() {
+    if (_lastSpokenText.isNotEmpty) {
+      _audio.speakLocal(_lastSpokenText);
+    } else {
+      _audio.speakLocal('Scanning. Please wait.');
+    }
+  }
+
+  /// Double tap — immediate scan right now
+  Future<void> _onDoubleTap() async {
+    await _audio.speakLocal('Scanning now.');
+    await _runFullScan();
+  }
+
+  /// Long press — speak time and useful info
+  Future<void> _onLongPress() async {
+    final now = DateTime.now();
+    final hour = now.hour > 12 ? now.hour - 12 : now.hour;
+    final minute = now.minute.toString().padLeft(2, '0');
+    final period = now.hour >= 12 ? 'PM' : 'AM';
+    await _audio.speakLocal(
+      'The time is $hour:$minute $period. '
+      'Double tap to scan. Long press for time.',
+    );
+  }
+
+  // ── SOS via shake ──────────────────────────────────────────────────────────
+
   void _setupShakeDetection() {
     _accelSub = accelerometerEventStream().listen((event) {
-      final magnitude = (event.x.abs() + event.y.abs() + event.z.abs());
+      final magnitude = event.x.abs() + event.y.abs() + event.z.abs();
       if (magnitude > 25) {
         final now = DateTime.now();
         if (_lastShake == null ||
@@ -187,50 +281,48 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
   @override
   void dispose() {
-    _detectionTimer?.cancel();
+    _scanTimer?.cancel();
+    _alertTimer?.cancel();
     _accelSub?.cancel();
     _cam.dispose();
     super.dispose();
   }
+
+  // ── UI ─────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        // Tap anywhere on screen to trigger a scan
-        onTap: () {
-          _audioUnlocked = true;
-          _processFrame();
-        },
+        onTap: _onSingleTap,
+        onDoubleTap: _onDoubleTap,
+        onLongPress: _onLongPress,
         behavior: HitTestBehavior.opaque,
         child: Stack(
           children: [
-            // ── Camera preview ───────────────────────────────────────────────
+            // ── Camera preview ─────────────────────────────────────────────
             if (_cam.isInitialized)
-              Positioned.fill(
-                child: CameraPreview(_cam.controller!),
-              )
+              Positioned.fill(child: CameraPreview(_cam.controller!))
             else
               const Center(
                 child: CircularProgressIndicator(color: Color(0xFF00BCD4)),
               ),
 
-            // ── Detection overlay (bounding boxes) ───────────────────────────
+            // ── Detection bounding boxes ───────────────────────────────────
             if (_detections.isNotEmpty && _cam.isInitialized)
               Positioned.fill(
                 child: DetectionOverlay(detections: _detections),
               ),
 
-            // ── Top status bar ───────────────────────────────────────────────
+            // ── Top status bar ─────────────────────────────────────────────
             Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
+              top: 0, left: 0, right: 0,
               child: SafeArea(
                 child: Container(
                   margin: const EdgeInsets.all(12),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.75),
                     borderRadius: BorderRadius.circular(12),
@@ -238,20 +330,20 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
                   child: Row(
                     children: [
                       Semantics(
-                        label: 'Go back',
+                        label: 'Go back to home',
                         button: true,
                         child: IconButton(
-                          icon: const Icon(Icons.arrow_back, color: Colors.white),
+                          icon: const Icon(Icons.arrow_back,
+                              color: Colors.white),
                           onPressed: () {
-                            _audio.speakLocal('Going back.');
+                            _audio.speakLocal('Going back to home.');
                             Navigator.pop(context);
                           },
-                          tooltip: 'Go back',
                         ),
                       ),
                       Expanded(
                         child: Semantics(
-                          liveRegion: true, // announces changes to screen readers
+                          liveRegion: true,
                           child: Text(
                             _statusText,
                             style: const TextStyle(
@@ -264,15 +356,11 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
                           ),
                         ),
                       ),
-                      // Processing indicator
                       if (_isProcessing)
                         const SizedBox(
-                          width: 20,
-                          height: 20,
+                          width: 20, height: 20,
                           child: CircularProgressIndicator(
-                            color: Color(0xFF00BCD4),
-                            strokeWidth: 2,
-                          ),
+                            color: Color(0xFF00BCD4), strokeWidth: 2),
                         ),
                     ],
                   ),
@@ -280,55 +368,51 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
               ),
             ),
 
-            // ── Tap hint overlay (shown briefly) ────────────────────────────
-            if (!_isProcessing && _cam.isInitialized)
-              Positioned(
-                bottom: 120,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: const Text(
-                      'Tap anywhere to scan',
-                      style: TextStyle(color: Colors.white70, fontSize: 14),
-                    ),
+            // ── Gesture hint ───────────────────────────────────────────────
+            Positioned(
+              bottom: 110, left: 0, right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Tap = repeat  •  Double-tap = scan now  •  Hold = time',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
+            ),
 
-            // ── Bottom controls ──────────────────────────────────────────────
+            // ── Bottom controls ────────────────────────────────────────────
             Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
+              bottom: 0, left: 0, right: 0,
               child: SafeArea(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
                   color: Colors.black.withOpacity(0.75),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // Manual scan button
                       Semantics(
                         label: 'Scan now',
                         button: true,
                         child: _ControlButton(
                           icon: Icons.search,
                           label: 'Scan Now',
-                          onTap: _processFrame,
+                          onTap: _onDoubleTap,
                         ),
                       ),
-                      // Voice command button
                       VoiceCommandButton(
                         isListening: _isListening,
-                        onListeningChanged: (v) => setState(() => _isListening = v),
+                        onListeningChanged: (v) =>
+                            setState(() => _isListening = v),
                       ),
-                      // SOS button
                       Semantics(
                         label: 'Emergency SOS',
                         button: true,
@@ -351,7 +435,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   }
 }
 
-// ── Small control button widget ───────────────────────────────────────────────
+// ── Control button ────────────────────────────────────────────────────────────
 
 class _ControlButton extends StatelessWidget {
   final IconData icon;
@@ -374,8 +458,7 @@ class _ControlButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 64,
-            height: 64,
+            width: 64, height: 64,
             decoration: BoxDecoration(
               color: color.withOpacity(0.2),
               shape: BoxShape.circle,
