@@ -1,32 +1,20 @@
 // Web implementation — uses browser's native speechSynthesis API.
-// This bypasses autoplay restrictions entirely.
 // ignore: avoid_web_libraries_in_flutter
-import 'dart:js' as js;
+import 'dart:html' as html;
 
 void speakWeb(String text, String lang) {
-  // Cancel any ongoing speech first
-  js.context.callMethod('eval', ['window.speechSynthesis.cancel()']);
+  // Cancel any ongoing speech
+  html.window.speechSynthesis?.cancel();
 
-  // Create utterance and speak
-  final script = '''
-    (function() {
-      var u = new SpeechSynthesisUtterance(${_jsString(text)});
-      u.lang = "$lang";
-      u.rate = 1.0;
-      u.pitch = 1.0;
-      u.volume = 1.0;
-      window.speechSynthesis.speak(u);
-    })();
-  ''';
-  js.context.callMethod('eval', [script]);
+  final utterance = html.SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+
+  html.window.speechSynthesis?.speak(utterance);
 }
 
 void stopWeb() {
-  js.context.callMethod('eval', ['window.speechSynthesis.cancel()']);
-}
-
-String _jsString(String text) {
-  // Escape single quotes and backslashes for safe JS string
-  final escaped = text.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
-  return "'$escaped'";
+  html.window.speechSynthesis?.cancel();
 }
