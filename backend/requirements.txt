@@ -9,6 +9,7 @@ pydantic-settings==2.2.1
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
 Pillow==10.4.0
+ultralytics==8.2.18
 
 # ── OCR ───────────────────────────────────────────────────────────────────────
 pytesseract==0.3.10
@@ -18,7 +19,6 @@ easyocr==1.7.1
 gTTS==2.5.1
 SpeechRecognition==3.10.3
 pydub==0.25.1
-openai-whisper
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 googlemaps==4.10.0
