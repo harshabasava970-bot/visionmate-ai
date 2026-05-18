@@ -6,39 +6,25 @@ pydantic==2.7.1
 pydantic-settings==2.2.1
 
 # ── AI / ML ───────────────────────────────────────────────────────────────────
-ultralytics==8.2.18          # YOLOv8
-opencv-python-headless==4.9.0.80
+ultralytics==8.3.145
+opencv-python-headless==4.10.0.84
 numpy==1.26.4
 Pillow==10.3.0
-torch==2.3.0
-torchvision==0.18.0
-onnxruntime==1.18.0          # ONNX mobile inference
 
 # ── OCR ───────────────────────────────────────────────────────────────────────
 pytesseract==0.3.10
 easyocr==1.7.1
 
-# ── Speech ────────────────────────────────────────────────────────────────────
-openai-whisper==20231117
-gTTS==2.5.1                  # Text-to-Speech
+# ── Speech / TTS ──────────────────────────────────────────────────────────────
+gTTS==2.5.1
 SpeechRecognition==3.10.3
 pydub==0.25.1
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 googlemaps==4.10.0
-geopy==2.4.1
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 httpx==0.27.0
 aiofiles==23.2.1
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-loguru==0.7.2
 python-dotenv==1.0.1
-redis==5.0.4                 # Optional caching layer
-celery==5.4.0                # Optional async task queue
-
-# ── Testing ───────────────────────────────────────────────────────────────────
-pytest==8.2.0
-pytest-asyncio==0.23.6
-httpx==0.27.0
+loguru==0.7.2
