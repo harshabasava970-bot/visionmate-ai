@@ -18,7 +18,7 @@ easyocr==1.7.1
 gTTS==2.5.1
 SpeechRecognition==3.10.3
 pydub==0.25.1
-openai-whisper==20231117
+openai-whisper
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 googlemaps==4.10.0
