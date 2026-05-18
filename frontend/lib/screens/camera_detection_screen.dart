@@ -115,11 +115,13 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
     final result = await _api.detectObjects(imageB64: b64);
     if (!mounted) return;
 
+    final summary = result.sceneSummary.isNotEmpty
+        ? result.sceneSummary
+        : 'No objects detected.';
+
     setState(() {
       _detections = result.detections;
-      _statusText = result.sceneSummary.isNotEmpty
-          ? result.sceneSummary
-          : 'No objects detected.';
+      _statusText = summary;
     });
 
     // Haptic feedback based on proximity
@@ -128,22 +130,16 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
     if (veryClose) {
       await _haptic.pulseVeryClose();
+      // Immediate proximity alert — always speak, bypass throttle
+      await _audio.speakLocal('Warning! Object very close. Stop immediately.');
+      _lastSpokenAt = DateTime.now();
+      return; // skip regular summary, proximity alert takes priority
     } else if (close) {
       await _haptic.pulseClose();
     }
 
-    // Play TTS audio from backend (or speak locally if empty)
-    if (result.audioB64.isNotEmpty) {
-      // Try backend audio first, fall back to local TTS with the scene text
-      try {
-        await _audio.playBase64Audio(result.audioB64);
-      } catch (_) {
-        await _speakIfReady(_statusText);
-      }
-      _lastSpokenAt = DateTime.now();
-    } else {
-      await _speakIfReady(_statusText);
-    }
+    // Always speak the scene summary using local TTS (works on web via speechSynthesis)
+    await _speakIfReady(summary);
   }
 
   Future<void> _runOCR(String b64) async {
@@ -152,18 +148,8 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
     final text = result['text'] as String? ?? 'No text found.';
     setState(() => _statusText = text);
-
-    final audioB64 = result['audio_b64'] as String?;
-    if (audioB64 != null && audioB64.isNotEmpty) {
-      try {
-        await _audio.playBase64Audio(audioB64);
-      } catch (_) {
-        await _speakIfReady(text);
-      }
-      _lastSpokenAt = DateTime.now();
-    } else {
-      await _speakIfReady(text);
-    }
+    // Always speak using local TTS
+    await _speakIfReady(text);
   }
 
   /// Speak only if enough time has passed since last speech
