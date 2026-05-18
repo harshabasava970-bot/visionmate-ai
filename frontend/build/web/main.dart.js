@@ -92083,7 +92083,7 @@ o===$&&A.a()
 s=this.b.a
 r=J.as(s)
 q=A.bL(r.h(s,"api_base_url"))
-if(q==null)q="http://10.0.2.2:8000"
+if(q==null)q="https://visionmate-ai.onrender.com"
 o.px(0,o.a.v2(B.b9,B.f5,q))
 q=A.bL(r.h(s,"language"))
 p.e=q==null?"en":q
@@ -92193,7 +92193,7 @@ l=J
 s=3
 return A.m(A.rn(),$async$gm4)
 case 3:p=m.bL(l.bi(b.a,"api_base_url"))
-o=A.aNg(p==null?"http://10.0.2.2:8000":p,B.G7,B.nD)
+o=A.aNg(p==null?"https://visionmate-ai.onrender.com":p,B.G7,B.nD)
 n=new A.Mp(A.b([B.CP],t.i6))
 n.U(n,B.K4)
 n=new A.L2($,n,$,new A.a7B(51200),!1)

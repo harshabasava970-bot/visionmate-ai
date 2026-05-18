@@ -16,7 +16,7 @@ class AppConstants {
   static const String keyEmergencyContact = 'emergency_contact';
 
   // ── Default Values ──────────────────────────────────────────────────────────
-  static const String defaultApiUrl  = 'http://10.0.2.2:8000'; // Android emulator
+  static const String defaultApiUrl  = 'https://visionmate-ai.onrender.com'; // Render backend
   static const String defaultLang    = 'en';
   static const double defaultVoiceSpeed = 1.0;
 
