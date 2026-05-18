@@ -78,31 +78,43 @@ class _HomeScreenState extends State<HomeScreen> {
                       icon: Icons.camera_alt,
                       label: 'Detect\nObjects',
                       color: const Color(0xFF00BCD4),
-                      semanticLabel: 'Start object detection camera',
-                      onTap: () => _navigate(const CameraDetectionScreen()),
+                      semanticLabel: 'Detect Objects. Start camera to identify what is around you.',
+                      onTap: () {
+                        AudioService.instance.speakLocal('Opening object detection.');
+                        _navigate(const CameraDetectionScreen());
+                      },
                     ),
                     LargeActionButton(
                       icon: Icons.text_fields,
                       label: 'Read\nText',
                       color: const Color(0xFF9C27B0),
-                      semanticLabel: 'Read text from camera',
-                      onTap: () => _navigate(
-                        const CameraDetectionScreen(mode: DetectionMode.ocr),
-                      ),
+                      semanticLabel: 'Read Text. Point camera at signs or labels to hear the text.',
+                      onTap: () {
+                        AudioService.instance.speakLocal('Opening text reader.');
+                        _navigate(
+                          const CameraDetectionScreen(mode: DetectionMode.ocr),
+                        );
+                      },
                     ),
                     LargeActionButton(
                       icon: Icons.navigation,
                       label: 'Navigate',
                       color: const Color(0xFF4CAF50),
-                      semanticLabel: 'Start navigation',
-                      onTap: () => _navigate(const NavigationScreen()),
+                      semanticLabel: 'Navigate. Get walking directions to a destination.',
+                      onTap: () {
+                        AudioService.instance.speakLocal('Opening navigation.');
+                        _navigate(const NavigationScreen());
+                      },
                     ),
                     LargeActionButton(
                       icon: Icons.sos,
                       label: 'Emergency\nSOS',
                       color: const Color(0xFFFF5252),
-                      semanticLabel: 'Emergency SOS',
-                      onTap: () => _navigate(const EmergencyContactsScreen()),
+                      semanticLabel: 'Emergency SOS. Send your location to emergency contacts.',
+                      onTap: () {
+                        AudioService.instance.speakLocal('Opening emergency contacts.');
+                        _navigate(const EmergencyContactsScreen());
+                      },
                     ),
                   ],
                 ),
