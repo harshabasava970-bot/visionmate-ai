@@ -8,12 +8,19 @@ Provides direction estimation and distance approximation.
 from __future__ import annotations
 
 import numpy as np
-from ultralytics import YOLO
 from config import get_settings
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 settings = get_settings()
+
+# Try to import ultralytics — gracefully degrade if not installed (e.g. Render free tier)
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
+    logger.warning("ultralytics not installed — detection will return empty results.")
 
 # ── Classes we care about (subset of COCO 80) ────────────────────────────────
 RELEVANT_CLASSES = {
@@ -58,6 +65,10 @@ class ObjectDetector:
         """Load the YOLO model (called once at startup)."""
         if self._loaded:
             return
+        if not YOLO_AVAILABLE:
+            logger.warning("YOLO not available — skipping model load.")
+            self._loaded = True
+            return
         logger.info(f"Loading YOLO model from {settings.yolo_model_path}")
         self.model = YOLO(settings.yolo_model_path)
         self._loaded = True
@@ -66,18 +77,10 @@ class ObjectDetector:
     # ── Core detection ────────────────────────────────────────────────────────
 
     def detect(self, frame: np.ndarray) -> list[dict]:
-        """
-        Run inference on a single BGR frame.
-
-        Returns:
-            List of detection dicts:
-            {
-                label, confidence, bbox: [x1,y1,x2,y2],
-                direction, distance_label, area_ratio
-            }
-        """
         if not self._loaded:
             self.load()
+        if not YOLO_AVAILABLE or not hasattr(self, 'model'):
+            return []  # Graceful fallback
 
         h, w = frame.shape[:2]
         results = self.model(
