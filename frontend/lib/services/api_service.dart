@@ -61,7 +61,6 @@ class ApiService {
     });
     return response.data as Map<String, dynamic>;
   }
-
   Future<Map<String, dynamic>> sendSpeechCommand({
     required Uint8List audioBytes,
     String language = 'en',
@@ -110,6 +109,18 @@ class ApiService {
       'latitude': lat,
       'longitude': lng,
       if (contactNumber != null) 'contact_number': contactNumber,
+      'lang': lang,
+    });
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> detectCurrency({
+    required String imageB64,
+    String lang = 'en',
+  }) async {
+    final dio = await _dio;
+    final response = await dio.post('/currency/', data: {
+      'image': imageB64,
       'lang': lang,
     });
     return response.data as Map<String, dynamic>;

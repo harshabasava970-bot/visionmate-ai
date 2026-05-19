@@ -21,8 +21,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loaded = false;
 
   final Map<String, String> _languages = {
-    'en': 'English', 'es': 'Spanish', 'fr': 'French',
-    'de': 'German',  'ar': 'Arabic',  'hi': 'Hindi', 'zh': 'Chinese',
+    'en': 'English',
+    'hi': 'हिंदी (Hindi)',
+    'te': 'తెలుగు (Telugu)',
   };
 
   @override

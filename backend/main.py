@@ -10,6 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
 
 from routers import detect, scene, ocr, speech, navigation, sos
+from routers import currency
 from utils.logger import setup_logger
 
 # Initialize logger
@@ -41,6 +42,7 @@ app.include_router(ocr.router,        prefix="/ocr",          tags=["OCR"])
 app.include_router(speech.router,     prefix="/speech-command",tags=["Speech"])
 app.include_router(navigation.router, prefix="/navigation",   tags=["Navigation"])
 app.include_router(sos.router,        prefix="/sos",          tags=["SOS"])
+app.include_router(currency.router,   prefix="/currency",     tags=["Currency"])
 
 
 @app.get("/", tags=["Health"])

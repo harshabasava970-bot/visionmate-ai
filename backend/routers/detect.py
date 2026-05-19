@@ -47,7 +47,7 @@ async def detect_objects(req: DetectRequest):
         raise HTTPException(status_code=400, detail=f"Invalid image: {exc}")
 
     detections = detector.detect(frame)
-    scene_summary = build_scene_summary(detections)
+    scene_summary = build_scene_summary(detections, lang=req.lang)
     crowded = detector.is_crowded(detections)
     audio_b64 = text_to_speech(scene_summary, lang=req.lang)
 

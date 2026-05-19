@@ -1,27 +1,40 @@
 /// VisionMate AI - Camera Detection Screen
 /// ==========================================
-/// Designed for blind users:
-/// - Camera starts automatically
-/// - Scans every 3 seconds and speaks results
-/// - IMMEDIATE alert (voice + vibration) when object is very close
-/// - Double-tap anywhere = instant scan
-/// - Long-press anywhere = speak time + battery info
-/// - Single tap = speak last result again
+/// Full voice-controlled experience for blind users.
+///
+/// GESTURES:
+///   Single tap   → repeat last result
+///   Double tap   → scan now
+///   Long press   → speak current time
+///
+/// VOICE COMMANDS (English / Hindi / Telugu):
+///   "Start scanning"        → begins auto-scan
+///   "Stop scanning"         → pauses auto-scan
+///   "Scan now"              → immediate scan
+///   "Read text"             → OCR mode scan
+///   "Which rupee note"      → currency detection
+///   "Can I turn left/right" → directional check
+///   "Activate SOS"          → emergency alert
+///   "What time is it"       → speaks time
+///
+/// COLLISION ALERT:
+///   If any object is very close → immediate voice warning + vibration
 
 import 'dart:async';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
 import '../services/audio_service.dart';
+import '../services/battery_service.dart';
 import '../services/camera_service.dart';
 import '../services/haptic_service.dart';
 import '../services/location_service.dart';
+import '../services/voice_command_service.dart';
 import '../models/detection_result.dart';
 import '../utils/constants.dart';
 import '../widgets/detection_overlay.dart';
-import '../widgets/voice_command_button.dart';
 
 export 'camera_detection_screen.dart';
 
@@ -42,71 +55,90 @@ class CameraDetectionScreen extends StatefulWidget {
 }
 
 class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
-  final CameraService _cam = CameraService.instance;
-  final ApiService _api = ApiService.instance;
-  final AudioService _audio = AudioService.instance;
-  final HapticService _haptic = HapticService.instance;
+  final _cam     = CameraService.instance;
+  final _api     = ApiService.instance;
+  final _audio   = AudioService.instance;
+  final _haptic  = HapticService.instance;
+  final _voice   = VoiceCommandService.instance;
+  final _battery = BatteryService.instance;
 
-  // Timers
-  Timer? _scanTimer;        // regular 3-second scan
-  Timer? _alertTimer;       // fast 1-second proximity check
+  Timer? _scanTimer;
+  Timer? _alertTimer;
 
   List<DetectionResult> _detections = [];
-  String _statusText = 'Starting camera…';
-  bool _isProcessing = false;
-  bool _isListening = false;
-  String _lastSpokenText = '';
+  String _statusText  = 'Starting…';
+  String _lastResult  = '';
+  bool _isProcessing  = false;
+  bool _isListening   = false;
+  bool _scanningActive = true;
+  String _lang        = 'en';
 
-  // Throttle regular TTS
-  DateTime? _lastSpokenAt;
-  static const _scanIntervalSec = 3;
-
-  // Proximity alert throttle — alert at most every 2 seconds
+  // Proximity alert throttle
   DateTime? _lastAlertAt;
-  static const _alertIntervalSec = 2;
+  DateTime? _lastSpokenAt;
+  static const _scanSec  = 3;
+  static const _alertSec = 2;
 
   // Shake → SOS
   StreamSubscription? _accelSub;
   DateTime? _lastShake;
 
+  // Language display names
+  static const _langNames = {'en': 'English', 'hi': 'हिंदी', 'te': 'తెలుగు'};
+
+  // Welcome messages per language
+  static const _welcomeMsg = {
+    'en': 'Camera ready. Scanning your surroundings. Say a command anytime.',
+    'hi': 'कैमरा तैयार है। आसपास स्कैन हो रहा है। कभी भी कमांड बोलें।',
+    'te': 'కెమెరా సిద్ధంగా ఉంది. చుట్టుపక్కల స్కాన్ అవుతోంది. ఎప్పుడైనా కమాండ్ చెప్పండి.',
+  };
+
   @override
   void initState() {
     super.initState();
-    _initCamera();
+    _loadLanguage();
     _setupShakeDetection();
   }
 
-  // ── Camera init ────────────────────────────────────────────────────────────
+  Future<void> _loadLanguage() async {
+    final prefs = await SharedPreferences.getInstance();
+    final lang = prefs.getString('language') ?? 'en';
+    setState(() => _lang = lang);
+    _voice.setLanguage(lang);
+    await _voice.initialize();
+    await _initCamera();
+  }
+
+  // ── Camera ─────────────────────────────────────────────────────────────────
 
   Future<void> _initCamera() async {
     try {
       await _cam.initialize();
-      setState(() => _statusText = 'Camera ready');
-
-      final modeMsg = widget.mode == DetectionMode.ocr
-          ? 'Text reader ready. Scanning for text.'
-          : 'Camera ready. Scanning your surroundings.';
-      await _audio.speakLocal(modeMsg);
-
+      setState(() => _statusText = _welcomeMsg[_lang] ?? _welcomeMsg['en']!);
+      await _audio.speakLocal(_statusText, lang: _langToTts(_lang));
+      _battery.startMonitoring(lang: _lang);
       _startScanLoop();
       _startAlertLoop();
     } catch (e) {
       setState(() => _statusText = 'Camera error. Please allow camera access.');
-      await _audio.speakLocal('Camera error. Please allow camera access.');
+      await _audio.speakLocal(_statusText);
     }
+  }
+
+  String _langToTts(String lang) {
+    const map = {'en': 'en-US', 'hi': 'hi-IN', 'te': 'te-IN'};
+    return map[lang] ?? 'en-US';
   }
 
   // ── Scan loops ─────────────────────────────────────────────────────────────
 
-  /// Regular scan every 3 seconds — speaks full scene description
   void _startScanLoop() {
     _scanTimer = Timer.periodic(
-      const Duration(seconds: _scanIntervalSec),
-      (_) => _runFullScan(),
+      const Duration(seconds: _scanSec),
+      (_) { if (_scanningActive) _runFullScan(); },
     );
   }
 
-  /// Fast proximity check every 1 second — ONLY for collision alerts
   void _startAlertLoop() {
     _alertTimer = Timer.periodic(
       const Duration(seconds: 1),
@@ -114,19 +146,16 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
     );
   }
 
-  /// Full scan: detect objects and speak scene description
   Future<void> _runFullScan() async {
     if (_isProcessing || !_cam.isInitialized) return;
     _isProcessing = true;
-
     try {
       final b64 = await _cam.captureFrameBase64();
       if (b64 == null) return;
-
       if (widget.mode == DetectionMode.ocr) {
         await _runOCR(b64);
       } else {
-        await _runDetection(b64, speakResult: true);
+        await _runDetection(b64, speak: true);
       }
     } catch (e) {
       debugPrint('Scan error: $e');
@@ -135,131 +164,225 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
     }
   }
 
-  /// Fast proximity check — only triggers if something is very close
   Future<void> _runProximityCheck() async {
     if (_isProcessing || !_cam.isInitialized) return;
-
     try {
       final b64 = await _cam.captureFrameBase64();
       if (b64 == null) return;
-      await _runDetection(b64, speakResult: false, proximityOnly: true);
+      await _runDetection(b64, speak: false, proximityOnly: true);
     } catch (_) {}
   }
 
   Future<void> _runDetection(
     String b64, {
-    required bool speakResult,
+    required bool speak,
     bool proximityOnly = false,
   }) async {
-    final result = await _api.detectObjects(imageB64: b64);
+    final result = await _api.detectObjects(imageB64: b64, lang: _lang);
     if (!mounted) return;
 
     final summary = result.sceneSummary.isNotEmpty
         ? result.sceneSummary
-        : 'No objects detected.';
+        : (_lang == 'hi' ? 'आगे का रास्ता साफ है।'
+           : _lang == 'te' ? 'ముందు దారి స్పష్టంగా ఉంది.'
+           : 'The path ahead appears clear.');
 
     if (!proximityOnly) {
       setState(() {
-        _detections = result.detections;
-        _statusText = summary;
-        _lastSpokenText = summary;
+        _detections  = result.detections;
+        _statusText  = summary;
+        _lastResult  = summary;
       });
     }
 
-    // ── COLLISION ALERT (highest priority) ──────────────────────────────────
+    // ── COLLISION ALERT ──────────────────────────────────────────────────────
     final veryClose = result.detections.where((d) => d.isVeryClose).toList();
     if (veryClose.isNotEmpty) {
       final now = DateTime.now();
-      final canAlert = _lastAlertAt == null ||
-          now.difference(_lastAlertAt!).inSeconds >= _alertIntervalSec;
-
-      if (canAlert) {
+      if (_lastAlertAt == null ||
+          now.difference(_lastAlertAt!).inSeconds >= _alertSec) {
         _lastAlertAt = now;
-
-        // 1. Strong vibration pattern
         await _haptic.pulseVeryClose();
 
-        // 2. Urgent voice alert — interrupts everything
         final labels = veryClose.map((d) => d.label).toSet().join(' and ');
-        await _audio.speakLocal(
-          'Warning! $labels very close. Stop immediately.',
-        );
-        return; // skip regular description
+        final alertMsg = _lang == 'hi'
+            ? 'चेतावनी! $labels बहुत पास है। तुरंत रुकें।'
+            : _lang == 'te'
+            ? 'హెచ్చరిక! $labels చాలా దగ్గరగా ఉంది. వెంటనే ఆగండి.'
+            : 'Warning! $labels very close. Stop immediately.';
+
+        await _audio.speakLocal(alertMsg, lang: _langToTts(_lang));
+        return;
       }
     }
 
-    // ── CLOSE OBJECT (caution) ───────────────────────────────────────────────
-    final close = result.detections.where((d) => d.isClose).toList();
-    if (close.isNotEmpty && !proximityOnly) {
+    // ── Close object haptic ──────────────────────────────────────────────────
+    if (result.detections.any((d) => d.isClose) && !proximityOnly) {
       await _haptic.pulseClose();
     }
 
-    // ── REGULAR SCENE DESCRIPTION ────────────────────────────────────────────
-    if (speakResult && !proximityOnly) {
+    // ── Regular scene description ────────────────────────────────────────────
+    if (speak && !proximityOnly) {
       final now = DateTime.now();
-      final canSpeak = _lastSpokenAt == null ||
-          now.difference(_lastSpokenAt!).inSeconds >= _scanIntervalSec;
-      if (canSpeak) {
+      if (_lastSpokenAt == null ||
+          now.difference(_lastSpokenAt!).inSeconds >= _scanSec) {
         _lastSpokenAt = now;
-        await _audio.speakLocal(summary);
+        await _audio.speakLocal(summary, lang: _langToTts(_lang));
       }
     }
   }
 
   Future<void> _runOCR(String b64) async {
-    final result = await _api.readText(imageB64: b64);
+    final result = await _api.readText(imageB64: b64, lang: _lang);
     if (!mounted) return;
-
     final text = result['text'] as String? ?? 'No text found.';
-    setState(() {
-      _statusText = text;
-      _lastSpokenText = text;
-    });
-
+    setState(() { _statusText = text; _lastResult = text; });
     final now = DateTime.now();
-    final canSpeak = _lastSpokenAt == null ||
-        now.difference(_lastSpokenAt!).inSeconds >= _scanIntervalSec;
-    if (canSpeak) {
+    if (_lastSpokenAt == null ||
+        now.difference(_lastSpokenAt!).inSeconds >= _scanSec) {
       _lastSpokenAt = now;
-      await _audio.speakLocal(text);
+      await _audio.speakLocal(text, lang: _langToTts(_lang));
     }
   }
 
-  // ── Gesture handlers ───────────────────────────────────────────────────────
-
-  /// Single tap — repeat last spoken result
-  void _onSingleTap() {
-    if (_lastSpokenText.isNotEmpty) {
-      _audio.speakLocal(_lastSpokenText);
-    } else {
-      _audio.speakLocal('Scanning. Please wait.');
+  Future<void> _runCurrencyDetection() async {
+    if (!_cam.isInitialized) return;
+    final b64 = await _cam.captureFrameBase64();
+    if (b64 == null) return;
+    try {
+      final result = await _api.detectCurrency(imageB64: b64, lang: _lang);
+      final msg = result['message'] as String? ?? 'Could not identify note.';
+      setState(() { _statusText = msg; _lastResult = msg; });
+      await _audio.speakLocal(msg, lang: _langToTts(_lang));
+    } catch (e) {
+      await _audio.speakLocal('Currency detection failed.', lang: _langToTts(_lang));
     }
   }
 
-  /// Double tap — immediate scan right now
-  Future<void> _onDoubleTap() async {
-    await _audio.speakLocal('Scanning now.');
-    await _runFullScan();
-  }
+  // ── Voice command handler ──────────────────────────────────────────────────
 
-  /// Long press — speak time and useful info
-  Future<void> _onLongPress() async {
-    final now = DateTime.now();
-    final hour = now.hour > 12 ? now.hour - 12 : now.hour;
-    final minute = now.minute.toString().padLeft(2, '0');
-    final period = now.hour >= 12 ? 'PM' : 'AM';
-    await _audio.speakLocal(
-      'The time is $hour:$minute $period. '
-      'Double tap to scan. Long press for time.',
+  Future<void> _startVoiceListening() async {
+    if (_isListening) return;
+    setState(() => _isListening = true);
+
+    final listeningMsg = _lang == 'hi' ? 'सुन रहा हूं।'
+        : _lang == 'te' ? 'వింటున్నాను.'
+        : 'Listening.';
+    await _audio.speakLocal(listeningMsg, lang: _langToTts(_lang));
+
+    await _voice.listen(
+      onCommand: (command, transcript) async {
+        setState(() => _isListening = false);
+        await _handleVoiceCommand(command, transcript);
+      },
     );
   }
 
-  // ── SOS via shake ──────────────────────────────────────────────────────────
+  Future<void> _handleVoiceCommand(
+      VoiceCommand command, String transcript) async {
+    final confirmation = _voice.getConfirmation(command);
+    if (confirmation.isNotEmpty) {
+      await _audio.speakLocal(confirmation, lang: _langToTts(_lang));
+    }
+
+    switch (command) {
+      case VoiceCommand.startScanning:
+        setState(() => _scanningActive = true);
+        break;
+
+      case VoiceCommand.stopScanning:
+        setState(() => _scanningActive = false);
+        break;
+
+      case VoiceCommand.scanNow:
+        await _runFullScan();
+        break;
+
+      case VoiceCommand.readText:
+        final b64 = await _cam.captureFrameBase64();
+        if (b64 != null) await _runOCR(b64);
+        break;
+
+      case VoiceCommand.whichNote:
+        await _runCurrencyDetection();
+        break;
+
+      case VoiceCommand.canITurnLeft:
+      case VoiceCommand.canITurnRight:
+        await _checkDirection(command == VoiceCommand.canITurnLeft ? 'left' : 'right');
+        break;
+
+      case VoiceCommand.activateSOS:
+        await _triggerSOS();
+        break;
+
+      case VoiceCommand.whatTimeIsIt:
+        await _speakTime();
+        break;
+
+      case VoiceCommand.batteryStatus:
+        await _battery.speakBatteryStatus();
+        break;
+
+      case VoiceCommand.unknown:
+        // confirmation already spoken
+        break;
+    }
+  }
+
+  Future<void> _checkDirection(String direction) async {
+    if (!_cam.isInitialized) return;
+    final b64 = await _cam.captureFrameBase64();
+    if (b64 == null) return;
+
+    final result = await _api.detectObjects(imageB64: b64, lang: _lang);
+    final sideObjects = result.detections
+        .where((d) => d.direction == direction)
+        .toList();
+
+    String msg;
+    if (sideObjects.isEmpty) {
+      msg = _lang == 'hi'
+          ? '${direction == "left" ? "बाईं" : "दाईं"} ओर रास्ता साफ है।'
+          : _lang == 'te'
+          ? '${direction == "left" ? "ఎడమవైపు" : "కుడివైపు"} దారి స్పష్టంగా ఉంది.'
+          : 'The ${direction} side appears clear. You can turn.';
+    } else {
+      final labels = sideObjects.map((d) => d.label).toSet().join(', ');
+      msg = _lang == 'hi'
+          ? '${direction == "left" ? "बाईं" : "दाईं"} ओर $labels है। सावधान रहें।'
+          : _lang == 'te'
+          ? '${direction == "left" ? "ఎడమవైపు" : "కుడివైపు"} $labels ఉంది. జాగ్రత్తగా ఉండండి.'
+          : 'There is $labels on the $direction side. Be careful.';
+    }
+
+    setState(() { _statusText = msg; _lastResult = msg; });
+    await _audio.speakLocal(msg, lang: _langToTts(_lang));
+  }
+
+  Future<void> _speakTime() async {
+    final now = DateTime.now();
+    final h = now.hour > 12 ? now.hour - 12 : (now.hour == 0 ? 12 : now.hour);
+    final m = now.minute.toString().padLeft(2, '0');
+    final period = now.hour >= 12 ? 'PM' : 'AM';
+
+    String msg;
+    if (_lang == 'hi') {
+      msg = 'अभी समय है $h बजकर $m मिनट।';
+    } else if (_lang == 'te') {
+      msg = 'ప్రస్తుత సమయం $h గంటలు $m నిమిషాలు.';
+    } else {
+      msg = 'The time is $h:$m $period.';
+    }
+    await _audio.speakLocal(msg, lang: _langToTts(_lang));
+  }
+
+  // ── SOS ────────────────────────────────────────────────────────────────────
 
   void _setupShakeDetection() {
     _accelSub = accelerometerEventStream().listen((event) {
-      final magnitude = event.x.abs() + event.y.abs() + event.z.abs();
-      if (magnitude > 25) {
+      final mag = event.x.abs() + event.y.abs() + event.z.abs();
+      if (mag > 25) {
         final now = DateTime.now();
         if (_lastShake == null ||
             now.difference(_lastShake!) > const Duration(seconds: 3)) {
@@ -272,18 +395,43 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
   Future<void> _triggerSOS() async {
     await _haptic.sosPulse();
-    await _audio.speakLocal('Emergency SOS triggered. Sending your location.');
+    final msg = _lang == 'hi'
+        ? 'आपातकालीन एसओएस सक्रिय। आपकी लोकेशन भेजी जा रही है।'
+        : _lang == 'te'
+        ? 'అత్యవసర ఎస్ఓఎస్ సక్రియమైంది. మీ స్థానం పంపబడుతోంది.'
+        : 'Emergency SOS triggered. Sending your location.';
+    await _audio.speakLocal(msg, lang: _langToTts(_lang));
     final pos = await LocationService.instance.getCurrentPosition();
     if (pos != null) {
-      await _api.sendSOS(lat: pos.latitude, lng: pos.longitude);
+      await _api.sendSOS(lat: pos.latitude, lng: pos.longitude, lang: _lang);
     }
   }
+
+  // ── Gesture handlers ───────────────────────────────────────────────────────
+
+  void _onSingleTap() {
+    if (_lastResult.isNotEmpty) {
+      _audio.speakLocal(_lastResult, lang: _langToTts(_lang));
+    }
+  }
+
+  Future<void> _onDoubleTap() async {
+    final msg = _lang == 'hi' ? 'अभी स्कैन हो रहा है।'
+        : _lang == 'te' ? 'ఇప్పుడు స్కాన్ అవుతోంది.'
+        : 'Scanning now.';
+    await _audio.speakLocal(msg, lang: _langToTts(_lang));
+    await _runFullScan();
+  }
+
+  Future<void> _onLongPress() async => _speakTime();
 
   @override
   void dispose() {
     _scanTimer?.cancel();
     _alertTimer?.cancel();
     _accelSub?.cancel();
+    _voice.stopListening();
+    _battery.stopMonitoring();
     _cam.dispose();
     super.dispose();
   }
@@ -301,7 +449,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
         behavior: HitTestBehavior.opaque,
         child: Stack(
           children: [
-            // ── Camera preview ─────────────────────────────────────────────
+            // Camera preview
             if (_cam.isInitialized)
               Positioned.fill(child: CameraPreview(_cam.controller!))
             else
@@ -309,119 +457,155 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
                 child: CircularProgressIndicator(color: Color(0xFF00BCD4)),
               ),
 
-            // ── Detection bounding boxes ───────────────────────────────────
+            // Bounding boxes
             if (_detections.isNotEmpty && _cam.isInitialized)
               Positioned.fill(
                 child: DetectionOverlay(detections: _detections),
               ),
 
-            // ── Top status bar ─────────────────────────────────────────────
+            // Top bar
             Positioned(
               top: 0, left: 0, right: 0,
               child: SafeArea(
                 child: Container(
-                  margin: const EdgeInsets.all(12),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  margin: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.75),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
                     children: [
-                      Semantics(
-                        label: 'Go back to home',
-                        button: true,
-                        child: IconButton(
-                          icon: const Icon(Icons.arrow_back,
-                              color: Colors.white),
-                          onPressed: () {
-                            _audio.speakLocal('Going back to home.');
-                            Navigator.pop(context);
-                          },
-                        ),
+                      // Back button
+                      IconButton(
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                        onPressed: () {
+                          _audio.speakLocal('Going back.', lang: _langToTts(_lang));
+                          Navigator.pop(context);
+                        },
+                        tooltip: 'Go back',
                       ),
+                      // Status text
                       Expanded(
                         child: Semantics(
                           liveRegion: true,
                           child: Text(
                             _statusText,
                             style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
+                              color: Colors.white, fontSize: 15,
                               fontWeight: FontWeight.w500,
                             ),
-                            maxLines: 4,
+                            maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                       ),
-                      if (_isProcessing)
-                        const SizedBox(
-                          width: 20, height: 20,
-                          child: CircularProgressIndicator(
-                            color: Color(0xFF00BCD4), strokeWidth: 2),
+                      // Language badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00BCD4).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFF00BCD4)),
                         ),
+                        child: Text(
+                          _langNames[_lang] ?? 'EN',
+                          style: const TextStyle(
+                              color: Color(0xFF00BCD4), fontSize: 11),
+                        ),
+                      ),
                     ],
                   ),
                 ),
               ),
             ),
 
-            // ── Gesture hint ───────────────────────────────────────────────
+            // Gesture hint
             Positioned(
-              bottom: 110, left: 0, right: 0,
+              bottom: 105, left: 0, right: 0,
               child: Center(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 20, vertical: 8),
+                      horizontal: 16, vertical: 6),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.5),
+                    color: Colors.black.withOpacity(0.55),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Text(
-                    'Tap = repeat  •  Double-tap = scan now  •  Hold = time',
-                    style: TextStyle(color: Colors.white60, fontSize: 12),
-                    textAlign: TextAlign.center,
+                    'Tap=repeat  •  Double-tap=scan  •  Hold=time',
+                    style: TextStyle(color: Colors.white54, fontSize: 11),
                   ),
                 ),
               ),
             ),
 
-            // ── Bottom controls ────────────────────────────────────────────
+            // Bottom controls
             Positioned(
               bottom: 0, left: 0, right: 0,
               child: SafeArea(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
+                      horizontal: 12, vertical: 10),
                   color: Colors.black.withOpacity(0.75),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      Semantics(
-                        label: 'Scan now',
-                        button: true,
-                        child: _ControlButton(
-                          icon: Icons.search,
-                          label: 'Scan Now',
-                          onTap: _onDoubleTap,
+                      // Scan toggle
+                      _ControlButton(
+                        icon: _scanningActive
+                            ? Icons.pause_circle
+                            : Icons.play_circle,
+                        label: _scanningActive ? 'Pause' : 'Resume',
+                        color: _scanningActive
+                            ? Colors.orange
+                            : const Color(0xFF00BCD4),
+                        onTap: () {
+                          setState(() => _scanningActive = !_scanningActive);
+                          final msg = _scanningActive
+                              ? 'Scanning resumed.'
+                              : 'Scanning paused.';
+                          _audio.speakLocal(msg, lang: _langToTts(_lang));
+                        },
+                      ),
+                      // Voice command button (large, center)
+                      GestureDetector(
+                        onTap: _startVoiceListening,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          width: 72, height: 72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isListening
+                                ? Colors.red.withOpacity(0.3)
+                                : const Color(0xFF00BCD4).withOpacity(0.2),
+                            border: Border.all(
+                              color: _isListening
+                                  ? Colors.red
+                                  : const Color(0xFF00BCD4),
+                              width: 3,
+                            ),
+                            boxShadow: _isListening
+                                ? [BoxShadow(
+                                    color: Colors.red.withOpacity(0.5),
+                                    blurRadius: 20, spreadRadius: 4)]
+                                : [],
+                          ),
+                          child: Icon(
+                            _isListening ? Icons.mic : Icons.mic_none,
+                            color: _isListening
+                                ? Colors.red
+                                : const Color(0xFF00BCD4),
+                            size: 34,
+                          ),
                         ),
                       ),
-                      VoiceCommandButton(
-                        isListening: _isListening,
-                        onListeningChanged: (v) =>
-                            setState(() => _isListening = v),
-                      ),
-                      Semantics(
-                        label: 'Emergency SOS',
-                        button: true,
-                        child: _ControlButton(
-                          icon: Icons.sos,
-                          label: 'SOS',
-                          color: Colors.red,
-                          onTap: _triggerSOS,
-                        ),
+                      // SOS button
+                      _ControlButton(
+                        icon: Icons.sos,
+                        label: 'SOS',
+                        color: Colors.red,
+                        onTap: _triggerSOS,
                       ),
                     ],
                   ),
@@ -458,16 +642,16 @@ class _ControlButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 64, height: 64,
+            width: 58, height: 58,
             decoration: BoxDecoration(
               color: color.withOpacity(0.2),
               shape: BoxShape.circle,
               border: Border.all(color: color, width: 2),
             ),
-            child: Icon(icon, color: color, size: 30),
+            child: Icon(icon, color: color, size: 28),
           ),
-          const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: color, fontSize: 12)),
+          const SizedBox(height: 3),
+          Text(label, style: TextStyle(color: color, fontSize: 11)),
         ],
       ),
     );

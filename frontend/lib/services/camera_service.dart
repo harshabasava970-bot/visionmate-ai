@@ -18,8 +18,15 @@ class CameraService {
   Future<void> initialize() async {
     _cameras = await availableCameras();
     if (_cameras.isEmpty) throw Exception('No cameras available.');
+
+    // Prefer back camera for blind users
+    final backCamera = _cameras.firstWhere(
+      (c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => _cameras.first,
+    );
+
     _controller = CameraController(
-      _cameras.first,
+      backCamera,
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.jpeg,

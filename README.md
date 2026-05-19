@@ -1,7 +1,7 @@
 # VisionMate AI 👁️
 
 > An AI-powered assistant for blind and visually impaired people.  
-> Real-time object detection, voice feedback, OCR text reading, navigation, and emergency SOS — all in one app.
+> Point your phone camera at the world — VisionMate speaks what it sees, warns of obstacles, reads text, detects currency, and calls for help — all hands-free.
 
 ---
 
@@ -9,31 +9,85 @@
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 Object Detection | Detects people, cars, obstacles, dogs, chairs and more using YOLOv8 |
-| 🗣️ Voice Feedback | Speaks what it sees — "3 people ahead, car on your left" |
-| 📏 Distance Estimation | Warns when objects are dangerously close with haptic vibration |
+| 🎯 Object Detection | Detects people, cars, chairs, trees, obstacles and more using YOLOv8 |
+| 🗣️ Continuous Voiceover | Speaks scene every 3 seconds — "Two people ahead. Chair on your left." |
+| ⚠️ Collision Alert | Immediate voice warning + vibration when anything is too close |
 | 📖 OCR Text Reading | Reads sign boards, bus numbers, medicine labels aloud |
-| 🎤 Voice Commands | Say "What is ahead?" or "Read text" to trigger actions |
-| 🧭 Navigation | Voice-guided walking directions via Google Maps |
-| 🆘 Emergency SOS | Double tap to send GPS location to emergency contact |
-| 🌐 Web App | Accessible from any browser, no install needed |
+| 💵 Currency Detection | Identifies Indian rupee notes (₹10, ₹20, ₹50, ₹100, ₹200, ₹500, ₹2000) |
+| 🎤 Voice Commands | Fully hands-free — say commands in English, Hindi, or Telugu |
+| 🧭 Navigation | Voice-guided walking directions — "Can I turn left?" |
+| 🆘 Emergency SOS | Say "Activate SOS" or shake phone to send GPS location to emergency contacts |
+| 🔋 Battery Alerts | Speaks battery warnings at 30%, 20%, 10% — reminds to connect power bank |
+| 🌐 Multilingual | English, हिंदी, తెలుగు — voice commands and responses in your language |
+
+---
+
+## 🎤 Voice Commands
+
+### English
+| Say | Action |
+|-----|--------|
+| "Start scanning" | Begin auto-scan |
+| "Stop scanning" | Pause auto-scan |
+| "Scan now" | Immediate scan |
+| "Read text" | OCR text reading |
+| "Which rupee note" | Currency detection |
+| "Can I turn left/right" | Check direction safety |
+| "Activate SOS" | Emergency alert |
+| "What time is it" | Speaks current time |
+| "Battery status" | Speaks battery level |
+
+### हिंदी (Hindi)
+| बोलें | कार्य |
+|-------|-------|
+| "स्कैन शुरू करो" | स्कैनिंग शुरू |
+| "अभी स्कैन करो" | तुरंत स्कैन |
+| "कौन सा नोट है" | नोट पहचान |
+| "एसओएस" | आपातकाल |
+| "बैटरी कितनी है" | बैटरी स्तर |
+
+### తెలుగు (Telugu)
+| చెప్పండి | చర్య |
+|----------|------|
+| "స్కాన్ ప్రారంభించు" | స్కాన్ మొదలు |
+| "ఇప్పుడు స్కాన్ చేయి" | వెంటనే స్కాన్ |
+| "ఏ నోటు" | నోటు గుర్తింపు |
+| "ఎస్ఓఎస్" | అత్యవసరం |
+| "బ్యాటరీ ఎంత ఉంది" | బ్యాటరీ స్థాయి |
+
+---
+
+## 👆 Gestures (No voice needed)
+
+| Gesture | Action |
+|---------|--------|
+| Single tap | Repeat last spoken result |
+| Double tap | Scan immediately |
+| Long press | Speak current time |
+| Shake phone | Trigger SOS |
 
 ---
 
 ## 🏗️ Tech Stack
 
-**Frontend**
-- Flutter (Mobile + Web)
+**Frontend (Flutter)**
+- Flutter 3.x (Android APK + Web)
 - Dart
-- Provider, SharedPreferences, SpeechToText, FlutterTTS
+- `speech_to_text` — voice command recognition
+- `flutter_tts` — on-device text-to-speech
+- `camera` — live camera feed
+- `battery_plus` — battery monitoring
+- `sensors_plus` — shake detection for SOS
+- `vibration` — haptic collision alerts
+- `geolocator` — GPS for navigation and SOS
 
-**Backend**
-- Python FastAPI
-- YOLOv8 (Ultralytics) — object detection
-- EasyOCR + Tesseract — text recognition
-- gTTS — text to speech
-- OpenCV — image processing
-- Google Maps API — navigation
+**Backend (Python FastAPI)**
+- YOLOv8 (Ultralytics) — real-time object detection
+- Tesseract OCR — text recognition
+- gTTS — text to speech (English, Hindi, Telugu)
+- OpenCV — image processing + currency detection
+- Google Maps API — walking navigation
+- Twilio — SMS emergency alerts
 
 ---
 
@@ -41,34 +95,47 @@
 
 ```
 visionmate_ai/
-├── backend/                  # FastAPI Python backend
-│   ├── main.py               # App entry point
+├── backend/
+│   ├── main.py               # FastAPI entry point
 │   ├── config.py             # Settings & env vars
 │   ├── requirements.txt      # Python dependencies
-│   ├── models/               # YOLO model weights
-│   ├── routers/              # API route handlers
+│   ├── models/               # YOLOv8 weights
+│   ├── routers/
 │   │   ├── detect.py         # POST /detect
 │   │   ├── ocr.py            # POST /ocr
+│   │   ├── currency.py       # POST /currency
 │   │   ├── scene.py          # POST /scene-summary
 │   │   ├── speech.py         # POST /speech-command
 │   │   ├── navigation.py     # POST /navigation
 │   │   └── sos.py            # POST /sos
-│   └── services/             # Business logic
-│       ├── detection/        # YOLOv8 detector
-│       ├── ocr/              # OCR service
-│       ├── voice/            # TTS service
-│       └── navigation/       # Maps service
+│   └── services/
+│       ├── detection/        # YOLOv8 + scene builder (EN/HI/TE)
+│       ├── ocr/              # Tesseract OCR
+│       ├── voice/            # gTTS + speech recognition
+│       └── navigation/       # Google Maps
 │
-├── frontend/                 # Flutter app
+├── frontend/
 │   ├── lib/
-│   │   ├── main.dart         # App entry point
-│   │   ├── screens/          # UI screens
-│   │   ├── services/         # API, camera, audio
-│   │   ├── widgets/          # Reusable components
-│   │   └── utils/            # Theme, constants
-│   └── pubspec.yaml          # Flutter dependencies
+│   │   ├── main.dart
+│   │   ├── screens/
+│   │   │   ├── splash_screen.dart        # Auto-launches camera
+│   │   │   ├── camera_detection_screen.dart  # Main screen
+│   │   │   ├── home_screen.dart
+│   │   │   ├── navigation_screen.dart
+│   │   │   ├── settings_screen.dart      # Language selector
+│   │   │   └── emergency_contacts_screen.dart
+│   │   ├── services/
+│   │   │   ├── audio_service.dart        # TTS (web + mobile)
+│   │   │   ├── battery_service.dart      # Battery alerts
+│   │   │   ├── camera_service.dart
+│   │   │   ├── voice_command_service.dart # EN/HI/TE commands
+│   │   │   ├── api_service.dart
+│   │   │   ├── haptic_service.dart
+│   │   │   └── location_service.dart
+│   │   └── utils/
+│   └── pubspec.yaml
 │
-└── docs/                     # Documentation
+└── docs/
     ├── API_DOCUMENTATION.md
     ├── INSTALLATION.md
     ├── DEPLOYMENT.md
@@ -89,20 +156,22 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Visit `http://localhost:8000/docs` to see all API endpoints.
+Visit `http://localhost:8000/docs` for interactive API docs.
 
-### Frontend (Web)
+### Android APK
 
 ```bash
 cd frontend
 flutter pub get
-flutter run -d chrome
+flutter build apk --release
+# APK at: build/app/outputs/flutter-apk/app-release.apk
 ```
 
-### Frontend (Android)
+### Web (Demo)
 
 ```bash
-flutter run -d <your-device-id>
+cd frontend
+flutter run -d chrome
 ```
 
 ---
@@ -111,21 +180,21 @@ flutter run -d <your-device-id>
 
 | Service | URL |
 |---------|-----|
-| Web App | [visionmate-ai.vercel.app](https://visionmate-ai.vercel.app) |
-| Backend API | [visionmate-api.onrender.com](https://visionmate-api.onrender.com) |
-| API Docs | [visionmate-api.onrender.com/docs](https://visionmate-api.onrender.com/docs) |
+| Web App | [visionmate-ai-phi.vercel.app](https://visionmate-ai-phi.vercel.app) |
+| Backend API | [visionmate-ai.onrender.com](https://visionmate-ai.onrender.com) |
+| API Docs | [visionmate-ai.onrender.com/docs](https://visionmate-ai.onrender.com/docs) |
 
 ---
 
 ## 🔧 Environment Variables
 
-Copy `.env.example` to `.env` in the backend folder and fill in your keys:
+Copy `.env.example` to `.env` in the backend folder:
 
 ```env
 GOOGLE_MAPS_API_KEY=your_key_here
 TWILIO_ACCOUNT_SID=your_sid
 TWILIO_AUTH_TOKEN=your_token
-EMERGENCY_CONTACT=+1234567890
+EMERGENCY_CONTACT=+91XXXXXXXXXX
 ```
 
 ---
@@ -134,46 +203,28 @@ EMERGENCY_CONTACT=+1234567890
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/detect/` | Detect objects in image |
+| POST | `/detect/` | Detect objects (supports lang=en/hi/te) |
 | POST | `/ocr/` | Extract text from image |
-| POST | `/scene-summary/` | Get natural language scene description |
+| POST | `/currency/` | Identify Indian rupee note |
+| POST | `/scene-summary/` | Natural language scene description |
 | POST | `/speech-command/` | Process voice command |
-| POST | `/navigation/` | Get walking directions |
-| POST | `/sos/` | Trigger emergency alert |
+| POST | `/navigation/` | Walking directions |
+| POST | `/sos/` | Emergency alert with GPS |
 | GET | `/health` | Health check |
-| GET | `/docs` | Interactive API docs |
 
 ---
 
-## 📱 Screens
+## ♿ Accessibility Design
 
-- **Splash Screen** — animated loading screen
-- **Home Screen** — 4 large accessible buttons
-- **Camera Detection** — live object detection with voice
-- **Navigation** — voice-guided directions
-- **Settings** — API URL, language, voice speed
-- **Emergency Contacts** — SOS management
-
----
-
-## ♿ Accessibility
-
-- High contrast dark theme
-- Large touch targets (min 48×48dp)
-- Full screen reader support
-- Voice-first interaction
-- Haptic feedback patterns
-- No small text anywhere
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo
-2. Create a branch: `git checkout -b feature/your-feature`
-3. Commit: `git commit -m "Add your feature"`
-4. Push: `git push origin feature/your-feature`
-5. Open a Pull Request
+- **Voice-first** — everything controllable by voice, no screen needed
+- **Auto-start** — camera opens immediately on launch
+- **Continuous scanning** — speaks surroundings every 3 seconds automatically
+- **Collision alert** — immediate warning when obstacle is too close
+- **Battery alerts** — warns at 30%, 20%, 10% to connect power bank
+- **Multilingual** — English, Hindi, Telugu
+- **Haptic feedback** — vibration patterns for proximity warnings
+- **Shake-to-SOS** — emergency trigger without finding any button
+- **High contrast** dark theme, large touch targets
 
 ---
 
@@ -183,4 +234,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-Built with ❤️ to make the world more accessible.
+Built with ❤️ to make the world more accessible for blind and visually impaired people.

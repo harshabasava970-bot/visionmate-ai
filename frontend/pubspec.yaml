@@ -30,6 +30,7 @@ dependencies:
   # ── Haptics & Sensors ────────────────────────────────────────────────────────
   vibration: ^2.0.0
   sensors_plus: ^5.0.1
+  battery_plus: ^6.0.1
 
   # ── State Management ─────────────────────────────────────────────────────────
   provider: ^6.1.2
