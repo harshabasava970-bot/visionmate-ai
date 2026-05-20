@@ -3,11 +3,19 @@ allprojects {
         google()
         mavenCentral()
     }
+    configurations.all {
+        resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'org.jetbrains.kotlin') {
+                details.useVersion '2.1.0'
+                details.because 'Force Kotlin 2.1.0 which is fully cached offline'
+            }
+        }
+    }
 }
 
-rootProject.buildDir = "../build"
+rootProject.buildDir = "C:/vmbuild/root"
 subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
+    project.buildDir = "C:/vmbuild/${project.name}"
     project.evaluationDependsOn(":app")
 }
 
