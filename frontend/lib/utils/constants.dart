@@ -18,7 +18,7 @@ class AppConstants {
   // ── Default Values ──────────────────────────────────────────────────────────
   static const String defaultApiUrl  = 'https://visionmate-ai.onrender.com'; // Render backend
   static const String defaultLang    = 'en';
-  static const double defaultVoiceSpeed = 1.0;
+  static const double defaultVoiceSpeed = 0.85; // Comfortable TTS speed for visually impaired users
 
   // ── Detection ───────────────────────────────────────────────────────────────
   /// How many milliseconds between frame captures

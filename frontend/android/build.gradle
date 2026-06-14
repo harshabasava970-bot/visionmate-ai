@@ -6,8 +6,8 @@ allprojects {
     configurations.all {
         resolutionStrategy.eachDependency { DependencyResolveDetails details ->
             if (details.requested.group == 'org.jetbrains.kotlin') {
-                details.useVersion '2.1.0'
-                details.because 'Force Kotlin 2.1.0 which is fully cached offline'
+                details.useVersion '1.9.25'
+                details.because 'Pin Kotlin stdlib to match Kotlin plugin 1.9.25'
             }
         }
     }

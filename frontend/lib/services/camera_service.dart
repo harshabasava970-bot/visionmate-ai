@@ -19,19 +19,28 @@ class CameraService {
     _cameras = await availableCameras();
     if (_cameras.isEmpty) throw Exception('No cameras available.');
 
-    // Prefer back camera for blind users
-    final backCamera = _cameras.firstWhere(
+    // Always force BACK camera — never use front camera for blind navigation
+    final CameraDescription backCamera;
+    final backCameras = _cameras.where(
       (c) => c.lensDirection == CameraLensDirection.back,
-      orElse: () => _cameras.first,
-    );
+    ).toList();
+
+    if (backCameras.isNotEmpty) {
+      backCamera = backCameras.first; // Use first (main) back camera
+    } else {
+      backCamera = _cameras.first; // Fallback only if no back camera exists
+    }
 
     _controller = CameraController(
       backCamera,
-      ResolutionPreset.medium,
-      enableAudio: false,
+      ResolutionPreset.medium, // medium = ~720p, good balance for free Render backend
+      enableAudio: false,      // No audio needed, keeps permissions minimal
       imageFormatGroup: ImageFormatGroup.jpeg,
+      // Do NOT enable flash/torch — haptic feedback only
     );
     await _controller!.initialize();
+    // Ensure flash is completely off
+    await _controller!.setFlashMode(FlashMode.off);
   }
 
   /// Capture a frame and return base64 JPEG string.

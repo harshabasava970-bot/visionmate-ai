@@ -21,6 +21,7 @@
 ///   If any object is very close → immediate voice warning + vibration
 
 import 'dart:async';
+import 'dart:convert';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:sensors_plus/sensors_plus.dart';
@@ -66,18 +67,21 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   Timer? _alertTimer;
 
   List<DetectionResult> _detections = [];
-  String _statusText  = 'Starting…';
-  String _lastResult  = '';
-  bool _isProcessing  = false;
-  bool _isListening   = false;
+  String _statusText   = 'Starting…';
+  String _lastResult   = '';
+  bool _isProcessing   = false;       // guards the full scan loop only
+  bool _isAlertProcessing = false;    // SEPARATE flag — guards proximity check independently
+  bool _isListening    = false;
   bool _scanningActive = true;
-  String _lang        = 'en';
+  String _lang         = 'en';
 
   // Proximity alert throttle
   DateTime? _lastAlertAt;
   DateTime? _lastSpokenAt;
-  static const _scanSec  = 3;
-  static const _alertSec = 2;
+
+  // Issue 9: Increased intervals to prevent overloading free Render backend
+  static const _scanSec  = 5;  // Was 3 — now 5 seconds between full scans
+  static const _alertSec = 2;  // Was 1 — now 2 seconds between proximity checks
 
   // Shake → SOS
   StreamSubscription? _accelSub;
@@ -103,9 +107,13 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   Future<void> _loadLanguage() async {
     final prefs = await SharedPreferences.getInstance();
     final lang = prefs.getString('language') ?? 'en';
+    // Issue 10: Load voice speed from SharedPreferences and apply it
+    final voiceSpeed = prefs.getDouble('voice_speed') ?? AppConstants.defaultVoiceSpeed;
     setState(() => _lang = lang);
     _voice.setLanguage(lang);
     await _voice.initialize();
+    // Apply saved voice speed before any speech occurs
+    await _audio.setSpeechRate(voiceSpeed);
     await _initCamera();
   }
 
@@ -116,6 +124,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
       await _cam.initialize();
       setState(() => _statusText = _welcomeMsg[_lang] ?? _welcomeMsg['en']!);
       await _audio.speakLocal(_statusText, lang: _langToTts(_lang));
+      // Issue 7: Start battery monitoring after camera init
       _battery.startMonitoring(lang: _lang);
       _startScanLoop();
       _startAlertLoop();
@@ -140,8 +149,10 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   }
 
   void _startAlertLoop() {
+    // Issue 6: Alert loop is INDEPENDENT from the scan loop.
+    // Uses _isAlertProcessing, NOT _isProcessing, so they never block each other.
     _alertTimer = Timer.periodic(
-      const Duration(seconds: 1),
+      const Duration(seconds: _alertSec),
       (_) => _runProximityCheck(),
     );
   }
@@ -165,12 +176,17 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   }
 
   Future<void> _runProximityCheck() async {
-    if (_isProcessing || !_cam.isInitialized) return;
+    // Issue 6: Uses _isAlertProcessing — completely independent from _isProcessing
+    if (_isAlertProcessing || !_cam.isInitialized) return;
+    _isAlertProcessing = true;
     try {
       final b64 = await _cam.captureFrameBase64();
       if (b64 == null) return;
       await _runDetection(b64, speak: false, proximityOnly: true);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isAlertProcessing = false;
+    }
   }
 
   Future<void> _runDetection(
@@ -202,7 +218,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
       if (_lastAlertAt == null ||
           now.difference(_lastAlertAt!).inSeconds >= _alertSec) {
         _lastAlertAt = now;
-        await _haptic.pulseVeryClose();
+        await _haptic.pulseVeryClose(); // Vibration only — no torch
 
         final labels = veryClose.map((d) => d.label).toSet().join(' and ');
         final alertMsg = _lang == 'hi'
@@ -218,7 +234,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
 
     // ── Close object haptic ──────────────────────────────────────────────────
     if (result.detections.any((d) => d.isClose) && !proximityOnly) {
-      await _haptic.pulseClose();
+      await _haptic.pulseClose(); // Single short pulse
     }
 
     // ── Regular scene description ────────────────────────────────────────────
@@ -346,7 +362,7 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
           ? '${direction == "left" ? "बाईं" : "दाईं"} ओर रास्ता साफ है।'
           : _lang == 'te'
           ? '${direction == "left" ? "ఎడమవైపు" : "కుడివైపు"} దారి స్పష్టంగా ఉంది.'
-          : 'The ${direction} side appears clear. You can turn.';
+          : 'The $direction side appears clear. You can turn.';
     } else {
       final labels = sideObjects.map((d) => d.label).toSet().join(', ');
       msg = _lang == 'hi'
@@ -394,6 +410,22 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
   }
 
   Future<void> _triggerSOS() async {
+    // Issue 3: Read stored emergency contacts first
+    final prefs = await SharedPreferences.getInstance();
+    final rawContacts = prefs.getString('emergency_contacts') ?? prefs.getString('contacts') ?? '[]';
+    final contactList = jsonDecode(rawContacts) as List;
+
+    if (contactList.isEmpty) {
+      // No contacts saved — instruct user to set them up
+      final noContactMsg = _lang == 'hi'
+          ? 'कृपया पहले आपातकालीन संपर्क जोड़ें। सेटिंग्स में जाएं।'
+          : _lang == 'te'
+          ? 'దయచేసి ముందుగా అత్యవసర సంప్రదింపులను జోడించండి. సెట్టింగ్‌లకు వెళ్ళండి.'
+          : 'Please set up emergency contacts first. Go to settings.';
+      await _audio.speakLocal(noContactMsg, lang: _langToTts(_lang));
+      return;
+    }
+
     await _haptic.sosPulse();
     final msg = _lang == 'hi'
         ? 'आपातकालीन एसओएस सक्रिय। आपकी लोकेशन भेजी जा रही है।'
@@ -401,9 +433,19 @@ class _CameraDetectionScreenState extends State<CameraDetectionScreen> {
         ? 'అత్యవసర ఎస్ఓఎస్ సక్రియమైంది. మీ స్థానం పంపబడుతోంది.'
         : 'Emergency SOS triggered. Sending your location.';
     await _audio.speakLocal(msg, lang: _langToTts(_lang));
+
     final pos = await LocationService.instance.getCurrentPosition();
     if (pos != null) {
-      await _api.sendSOS(lat: pos.latitude, lng: pos.longitude, lang: _lang);
+      // Send location + all contacts to backend
+      final contacts = contactList.cast<Map<String, dynamic>>();
+      final primaryPhone = contacts.isNotEmpty ? contacts.first['phone'] as String? : null;
+      await _api.sendSOS(
+        lat: pos.latitude,
+        lng: pos.longitude,
+        contactNumber: primaryPhone,
+        contacts: contacts,
+        lang: _lang,
+      );
     }
   }
 

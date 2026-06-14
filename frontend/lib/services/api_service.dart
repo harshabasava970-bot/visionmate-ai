@@ -102,6 +102,7 @@ class ApiService {
     required double lat,
     required double lng,
     String? contactNumber,
+    List<Map<String, dynamic>>? contacts,
     String lang = 'en',
   }) async {
     final dio = await _dio;
@@ -109,6 +110,7 @@ class ApiService {
       'latitude': lat,
       'longitude': lng,
       if (contactNumber != null) 'contact_number': contactNumber,
+      if (contacts != null && contacts.isNotEmpty) 'contacts': contacts,
       'lang': lang,
     });
     return response.data as Map<String, dynamic>;

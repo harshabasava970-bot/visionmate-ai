@@ -48,7 +48,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(AppConstants.keyApiBaseUrl, _apiUrlController.text.trim());
-    await prefs.setString(AppConstants.keyLanguage, _selectedLang);
+    await prefs.setString('language', _selectedLang); // Explicit key for cross-screen access
+    await prefs.setDouble('voice_speed', _voiceSpeed); // Explicit key for cross-screen access
     await prefs.setDouble(AppConstants.keyVoiceSpeed, _voiceSpeed);
     await prefs.setBool(AppConstants.keyHapticEnabled, _hapticEnabled);
     await prefs.setBool(AppConstants.keyOfflineMode, _offlineMode);
@@ -98,8 +99,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Icon(Icons.slow_motion_video, color: Colors.white54),
               Expanded(
                 child: Slider(
-                  value: _voiceSpeed, min: 0.5, max: 2.0, divisions: 6,
-                  label: '${_voiceSpeed.toStringAsFixed(1)}x',
+                  value: _voiceSpeed, min: 0.5, max: 1.5, divisions: 10,
+                  label: '${_voiceSpeed.toStringAsFixed(2)}x',
                   activeColor: const Color(0xFF00BCD4),
                   onChanged: (v) => setState(() => _voiceSpeed = v),
                 ),

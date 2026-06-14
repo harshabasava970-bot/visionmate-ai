@@ -1,4 +1,8 @@
 /// VisionMate AI - Emergency Contacts Screen
+///
+/// On first launch, prompts user to add emergency contacts.
+/// Contacts are stored in SharedPreferences as JSON under key 'emergency_contacts'.
+/// SOS reads stored contacts and sends location + contacts to backend.
 
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -20,6 +24,7 @@ class EmergencyContactsScreen extends StatefulWidget {
 class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   List<EmergencyContact> _contacts = [];
   bool _isSendingSOS = false;
+  bool _loaded = false;
 
   @override
   void initState() {
@@ -30,16 +35,59 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
   Future<void> _loadContacts() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('contacts') ?? '[]';
+    // Support both 'emergency_contacts' (new key) and legacy 'contacts' key
+    final raw = prefs.getString('emergency_contacts') ?? prefs.getString('contacts') ?? '[]';
     final list = jsonDecode(raw) as List;
     setState(() {
       _contacts = list.map((e) => EmergencyContact.fromJson(e as Map<String, dynamic>)).toList();
+      _loaded = true;
     });
+
+    // First launch prompt: if no contacts, show add dialog automatically
+    if (_contacts.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showFirstLaunchPrompt());
+    }
   }
 
+  /// Saves contacts to SharedPreferences under 'emergency_contacts'.
   Future<void> _saveContacts() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('contacts', jsonEncode(_contacts.map((c) => c.toJson()).toList()));
+    final json = jsonEncode(_contacts.map((c) => c.toJson()).toList());
+    await prefs.setString('emergency_contacts', json);
+    // Also write legacy key so camera screen can read it
+    await prefs.setString('contacts', json);
+  }
+
+  void _showFirstLaunchPrompt() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'Set Up Emergency Contacts',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'No emergency contacts found.\n\n'
+          'Please add at least one contact so SOS can alert them in an emergency.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Later', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _showContactDialog();
+            },
+            child: const Text('Add Contact'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showContactDialog({EmergencyContact? existing}) {
@@ -84,22 +132,39 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
   Future<void> _sendSOS() async {
     if (_contacts.isEmpty) {
-      await AudioService.instance.speakLocal('No emergency contacts. Please add one first.');
+      await AudioService.instance.speakLocal(
+        'Please set up emergency contacts first. Go to settings.',
+      );
+      _showFirstLaunchPrompt();
       return;
     }
+
     setState(() => _isSendingSOS = true);
     await HapticService.instance.sosPulse();
     await AudioService.instance.speakLocal('Sending emergency SOS. Please wait.');
+
     try {
       final pos = await LocationService.instance.getCurrentPosition();
       if (pos == null) {
         await AudioService.instance.speakLocal('Cannot get location. SOS failed.');
         return;
       }
+
+      // Send SOS with all contacts (primary + additional)
+      final contactNumbers = _contacts.map((c) => c.phone).toList();
       final result = await ApiService.instance.sendSOS(
-        lat: pos.latitude, lng: pos.longitude, contactNumber: _contacts.first.phone,
+        lat: pos.latitude,
+        lng: pos.longitude,
+        contactNumber: _contacts.first.phone,
+        contacts: _contacts.map((c) => c.toJson()).toList(),
       );
-      await AudioService.instance.playBase64Audio(result['audio_b64'] as String);
+
+      final audioB64 = result['audio_b64'] as String?;
+      if (audioB64 != null && audioB64.isNotEmpty) {
+        await AudioService.instance.playBase64Audio(audioB64);
+      } else {
+        await AudioService.instance.speakLocal('SOS sent to ${contactNumbers.length} contact${contactNumbers.length > 1 ? "s" : ""}.');
+      }
     } catch (_) {
       await AudioService.instance.speakLocal('SOS failed. Please call for help manually.');
     } finally {
@@ -109,12 +174,16 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_loaded) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('Emergency Contacts'),
         actions: [IconButton(icon: const Icon(Icons.add), onPressed: () => _showContactDialog())],
       ),
       body: SafeArea(child: Column(children: [
+        // SOS Button
         Padding(
           padding: const EdgeInsets.all(20),
           child: GestureDetector(
@@ -135,6 +204,19 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
             ),
           ),
         ),
+
+        // Contacts info text
+        if (_contacts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+            child: Text(
+              '⚠️ No emergency contacts set up.\nTap + above to add a contact.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.orangeAccent, fontSize: 15),
+            ),
+          ),
+
+        // Contact list
         Expanded(
           child: _contacts.isEmpty
               ? const Center(child: Text('No contacts.\nTap + to add one.',

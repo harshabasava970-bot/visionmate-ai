@@ -25,7 +25,7 @@ class AudioService {
     if (_initialized) return;
     if (!kIsWeb) {
       await _tts.setLanguage('en-US');
-      await _tts.setSpeechRate(1.0);
+      await _tts.setSpeechRate(0.85); // Reduced from 1.0 — more comfortable for visually impaired users
       await _tts.setVolume(1.0);
       await _tts.setPitch(1.0);
     }
