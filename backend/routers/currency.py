@@ -116,5 +116,4 @@ async def detect_currency(req: CurrencyRequest):
         denomination=denomination,
         message=message,
         audio_b64=audio_b64,
-    )
-/
+    )%
